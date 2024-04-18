@@ -1,0 +1,87 @@
+import Joi from "joi"
+import {
+  Timestamp,
+  doc,
+  getDoc,
+  serverTimestamp,
+  setDoc,
+} from "firebase/firestore"
+
+import { ErrMsg, IDatabaseResult } from "../../utils/errorMessageHelper"
+import { convert } from "../../utils/joiErrorConverter"
+
+import DB from "../../services/BackendService"
+import { tDataSelf } from "./types"
+import dataDataSelf from "../../../data/dataDataSelf"
+
+const tableName = "singletons"
+const collectionRef = DB.createCollection(tableName)
+
+export default class DataSelf
+{
+  public static readonly id: string = "dataSelf"
+  private static docRef = doc(collectionRef, DataSelf.id)
+
+  name: string | null
+  address: string | null
+  npwp: string | null
+  updatedAt: Date | null
+
+  constructor(data: tDataSelf) {
+    this.name = data.name ?? null;
+    this.address = data.address ?? null;
+    this.npwp = data.npwp ?? null;
+    this.updatedAt = (data.updatedAt instanceof Timestamp) ? data.updatedAt.toDate() : (data.updatedAt ?? null);
+  }
+
+  public static async get(): Promise<DataSelf> {
+    return new Promise<DataSelf>(async (resolve, reject) => {
+      return await getDoc(this.docRef)
+      .then(async (res) => {
+        if (res.exists()) {
+          return resolve(new DataSelf({...res.data()}))
+        }
+        else {
+          await DataSelf.init();
+        }
+      })
+      .catch(error => { return reject({ error, message: ErrMsg.FIRESTORE_ERROR }) })
+    })
+  }
+
+  public static async init(): Promise<IDatabaseResult>{
+    return new Promise<IDatabaseResult>(async (resolve, reject) => {
+      return await setDoc(this.docRef, {
+        name: dataDataSelf.name,
+        address: dataDataSelf.address,
+        npwp: dataDataSelf.npwp,
+        updatedAt: serverTimestamp(),
+      })
+      .then((docRef) => { return resolve({ data: docRef }) })
+      .catch(error => { return reject({ error, message: ErrMsg.FIRESTORE_ERROR }) })
+    })
+  }
+
+  public static async createOrUpdate(inputs: any): Promise<IDatabaseResult>{
+    return new Promise<IDatabaseResult>(async (resolve, reject) => {
+      const joiValidate = Joi.object({
+        name: Joi.string().required(),
+        address: Joi.string().required(),
+        npwp: Joi.string().required(),
+        updatedAt : Joi.date().timestamp("javascript").optional(),
+      }).validate(inputs, {abortEarly: false});
+
+      if (!joiValidate.error) {
+        return await setDoc(this.docRef, {
+          name: inputs.name,
+          address: inputs.address,
+          npwp: inputs.npwp,
+          updatedAt: serverTimestamp(),
+        })
+        .then((docRef) => { return resolve({ data: docRef }) })
+        .catch(error => { return reject({ error, message: ErrMsg.FIRESTORE_ERROR }) })
+      }
+      return reject(convert(joiValidate.error))
+    })
+  }
+}

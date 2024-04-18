@@ -1,0 +1,243 @@
+import Joi from "joi"
+import {
+  addDoc,
+  deleteDoc,
+  getDoc,
+  getDocs,
+  doc,
+  updateDoc,
+  query,
+  where,
+  Timestamp,
+  QueryConstraint,
+  orderBy,
+  serverTimestamp,
+  limit,
+  startAfter,
+} from "firebase/firestore"
+
+import { ErrMsg, IDatabaseResult } from "../../utils/errorMessageHelper"
+import { convert } from "../utils/joiErrorConverter"
+
+import DB from "../../services/BackendService"
+import { tFaktur, tFakturGetReportOptions } from "../types"
+
+export default class Faktur
+{
+  public static readonly tableName: string = "faktur"
+  private static collectionRef = DB.createCollection(Faktur.tableName)
+
+  readonly id?: string
+  code: string | null
+  companyName: string | null
+  companyAddress: string | null
+  companyNpwp: string | null
+  dpp: number | 0
+  ppn: number | 0
+  keywords: string[] | null
+  updatedAt: Date | null
+  createdAt: Date | null
+
+  constructor(data: tFaktur) {
+    this.id = data.id;
+    this.code = data.code ?? null;
+    this.companyName = !!data.companyName?String(data.companyName).toUpperCase():null;
+    this.companyAddress = !!data.companyAddress?String(data.companyAddress).toUpperCase():null;
+    this.companyNpwp = data.companyNpwp ?? null;
+    this.dpp = Number(data.dpp) ?? 0;
+    this.ppn = Number(data.ppn) ?? 0;
+    if (!this.id && !data.keywords) {
+      this.keywords = !!this.companyName?this.companyName.split(" "):null;
+    }
+    else {
+      this.keywords = data.keywords ?? null;
+    }
+    this.updatedAt = (data.updatedAt instanceof Timestamp) ? data.updatedAt.toDate() : (data.updatedAt ?? null);
+    this.createdAt = (data.createdAt instanceof Timestamp) ? data.createdAt.toDate() : (data.createdAt ?? new Date());
+  }
+
+  public static async raw(...constraints: QueryConstraint[]): Promise<Faktur[]> {
+    return new Promise<Faktur[]>(async (resolve, reject) => {
+      let fQuery = query(this.collectionRef, ...constraints);
+      return await getDocs(fQuery)
+      .then(res => { resolve(res.docs.map(docR => new Faktur({ ...docR.data(), id: docR.id }))) })
+      .catch(error => reject({ error, message: ErrMsg.FIRESTORE_ERROR }));
+    })
+  }
+
+  public static async all(): Promise<Faktur[]> {
+    return new Promise<Faktur[]>(async (resolve, reject) => {
+      let fQuery = query(this.collectionRef, orderBy("createdAt", "desc"))
+      return await getDocs(fQuery)
+        .then(res => { resolve(res.docs.map(docR => new Faktur({ ...docR.data(), id: docR.id }))) })
+        .catch(error => reject({ error, message: ErrMsg.FIRESTORE_ERROR }))
+    })
+  }
+
+  public static async paginate(pageSize?: number, lastFakturId?: string): Promise<Faktur[]> {
+    return new Promise<Faktur[]>(async (resolve, reject) => {
+      // let lastCollectionFaktur: Faktur | null =
+      //   await getDocs(query(this.collectionRef, orderBy("createdAt", "asc"), limit(1)))
+      // .then((res) => {
+      //   let newFakturs = res.docs.map(docR => new Faktur({ ...docR.data(), id: docR.id }))
+      //   if (!!newFakturs && newFakturs.length >=0) return newFakturs[0];
+      //   else return null;
+      // })
+      // .catch(err => {
+      //   console.error(err);
+      //   return null;
+      // })
+
+      let constraints: QueryConstraint[] = [
+        orderBy("createdAt", "desc"),
+      ];
+      if (!pageSize) pageSize = 1;
+      constraints.push(limit(pageSize));
+      if (!!lastFakturId) {
+        let startSnapshot = await getDoc(doc(this.collectionRef, lastFakturId))
+        constraints.push(startAfter(startSnapshot))
+        // console.log("startSnapshot", startSnapshot)
+      }
+      // if (!!lastCollectionFaktur) {
+      //   let endSnapshot = await getDoc(doc(this.collectionRef, lastCollectionFaktur.id))
+      //   constraints.push(endAt(endSnapshot));
+      //   console.log("endSnapshot", endSnapshot)
+      // }
+      // const snapshot = await getCountFromServer(query(this.collectionRef, orderBy("createdAt", "desc")));
+      // console.log('count: ', snapshot.data().count);
+      let fQuery = query(this.collectionRef, ...constraints)
+      return await getDocs(fQuery)
+        .then(res => { resolve(res.docs.map(docR => new Faktur({ ...docR.data(), id: docR.id }))) })
+        .catch(error => reject({ error, message: ErrMsg.FIRESTORE_ERROR }))
+    })
+  }
+
+  public static async findById(idFaktur: string): Promise<Faktur> {
+    return new Promise<Faktur>(async (resolve, reject) => {
+      let docRef = doc(this.collectionRef, idFaktur);
+      let currFaktur = await getDoc(docRef);
+      if (currFaktur.exists()) return resolve(new Faktur({
+        ...currFaktur.data(), id: currFaktur.id,
+      }));
+      else return reject({ message: ErrMsg.NOT_FOUND });
+    })
+  }
+
+  public static async add(inputs: Faktur): Promise<IDatabaseResult> {
+    return new Promise<IDatabaseResult>(async (resolve, reject) => {
+      const joiValidate = Joi.object({
+        id : Joi.string().optional(),
+        code: Joi.string().required(),
+        companyName: Joi.string().required(),
+        companyAddress: Joi.string().required(),
+        companyNpwp: Joi.string().required(),
+        dpp: Joi.number().required(),
+        ppn: Joi.number().required(),
+        keywords: Joi.array().optional(),
+        createdAt: Joi.date().timestamp("javascript").optional(),
+        updatedAt: Joi.date().timestamp("javascript").optional().allow(null),
+      }).validate(inputs, {abortEarly: false});
+
+      if (!joiValidate.error) {
+        let newFakturData: any = {
+          code: inputs.code,
+          companyName: inputs.companyName,
+          companyAddress: inputs.companyAddress,
+          companyNpwp: inputs.companyNpwp,
+          dpp: inputs.dpp,
+          ppn: inputs.ppn,
+          keywords: inputs.keywords,
+          createdAt: serverTimestamp(),
+        }
+        Object.keys(newFakturData).forEach(key => newFakturData[key] === undefined && delete newFakturData[key])
+        return await addDoc(this.collectionRef, newFakturData)
+        .then((docRef) => { return resolve({ data: docRef }) })
+        .catch(error => { return reject({ error, message: ErrMsg.FIRESTORE_ERROR }) })
+      }
+      else { return reject(convert(joiValidate.error)); }
+    })
+  }
+
+  public static async update(inputs: Faktur): Promise<IDatabaseResult> {
+    return new Promise<IDatabaseResult>(async (resolve, reject) => {
+      const joiValidate = Joi.object({
+        id : Joi.string().optional(),
+        code: Joi.string().required(),
+        companyName: Joi.string().required(),
+        companyAddress: Joi.string().required(),
+        companyNpwp: Joi.string().required(),
+        dpp: Joi.number().required(),
+        ppn: Joi.number().required(),
+        keywords: Joi.array().optional(),
+        createdAt: Joi.date().timestamp("javascript").optional(),
+        updatedAt: Joi.date().timestamp("javascript").optional().allow(null),
+      }).validate(inputs, {abortEarly: false});
+
+      if (!joiValidate.error) {
+        let newFakturData: any = {
+          code: inputs.code,
+          companyName: inputs.companyName,
+          companyAddress: inputs.companyAddress,
+          companyNpwp: inputs.companyNpwp,
+          dpp: inputs.dpp,
+          ppn: inputs.ppn,
+          keywords: !!inputs.companyName?inputs.companyName.trim().split(" "):null,
+          updatedAt: serverTimestamp(),
+        }
+        Object.keys(newFakturData).forEach(key => newFakturData[key] === undefined && delete newFakturData[key])
+        // return reject({ message: "hahaha" })
+        return await updateDoc(doc(this.collectionRef, inputs.id), newFakturData)
+        .then((docRef) => { return resolve({ data: docRef }) })
+        .catch(error => { return reject({ error, message: ErrMsg.FIRESTORE_ERROR }) })
+      }
+      else { return reject(convert(joiValidate.error)); }
+    })
+  }
+
+  public static async getReport(companyName: string, dateEnd?: Date, dateStart?: Date, options?: tFakturGetReportOptions): Promise<Faktur[]>{
+    return new Promise<Faktur[]>(async (resolve, reject) => {
+      let constraints: QueryConstraint[] = [];
+
+      companyName = companyName.trim().toUpperCase();
+      if (!!options && !!options.exact) {
+        constraints.push(where("companyName", "==", companyName));
+      }
+      else {
+        let splitedName = companyName.split(" ");
+        if (companyName !== '' && companyName.length > 0 && splitedName.length > 0) {
+          constraints.push(where("keywords", "array-contains-any", splitedName));
+        }
+      }
+      if (!dateEnd) dateEnd = new Date();
+      dateEnd.setHours(23, 59, 59, 999);
+      if (!!dateStart) {
+        dateStart.setHours(0, 0, 0, 0);
+        constraints.push(where("createdAt", ">=", dateStart));
+      }
+
+      let fQuery = query(
+        this.collectionRef,
+        ...constraints,
+        where("createdAt", "<=", dateEnd),
+        orderBy("createdAt", "desc")
+      );
+
+      return await getDocs(fQuery)
+        .then(res => { resolve(res.docs.map(docR => {
+          let data = docR.data();
+          return new Faktur({ ...data, id: docR.id, })
+        })) })
+        // }).filter(e => e.type===type)) })
+        .catch(error => reject({ error, message: ErrMsg.FIRESTORE_ERROR }))
+    })
+  }
+
+  public static async delete(idFaktur: string): Promise<IDatabaseResult> {
+    return new Promise<IDatabaseResult>(async (resolve, reject) => {
+      const docRef = doc(this.collectionRef, idFaktur);
+      return await deleteDoc(docRef)
+      .then(() => resolve({ message: "Delete Success!" }))
+      .catch(error => reject({ error, message: ErrMsg.FIRESTORE_ERROR }));
+    })
+  }
+}

@@ -1,0 +1,19 @@
+import { ValidationError } from "joi"
+
+export interface IJoiConvertedError {
+  errors: any
+  message?: string
+}
+
+export const convert = (joiError: ValidationError): IJoiConvertedError | null => {
+  let errors: any = {};
+  let message = "Unknown error.";
+  // joiError.details?.forEach((err) => {
+  //   if (err?.context?.key) errors[err.context.key] = err.message;
+  // })
+  for (let i = 0; i < joiError.details.length; i++) {
+    if (i === 0) message = joiError.details[i].message;
+    if (joiError.details[i].context?.key) errors[joiError?.details[i]?.context?.key??i] = joiError.details[i].message;
+  }
+  return { errors, message: message }
+}
